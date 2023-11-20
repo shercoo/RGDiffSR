@@ -1,0 +1,2 @@
+# RGDiffSR
+The official pytorch implementation of Paper: RECOGNITION-GUIDED DIFFUSION MODEL FOR SCENE TEXT IMAGE SUPER-RESOLUTION
