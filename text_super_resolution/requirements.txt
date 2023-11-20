@@ -1,0 +1,8 @@
+scipy
+lpips
+cython
+pyfasttext
+tensorboardX
+imgaug
+ptflops
+thop

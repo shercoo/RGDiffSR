@@ -1,0 +1,100 @@
+model:
+  base_learning_rate: 1e-06
+  target: ldm.models.diffusion.ddpm.LatentDiffusion
+  params:
+    linear_start: 0.0015
+    linear_end: 0.0155
+    log_every_t: 100
+    timesteps: 1000
+    loss_type: l2
+    first_stage_key: image
+    cond_stage_key: OC_image
+    image_size: 32
+    image_height: 32
+    image_width: 128
+    channels: 3
+    concat_mode: true
+    cond_stage_trainable: false
+    conditioning_key: concat
+    fid_eval: true
+    visualize: true
+
+    ckpt_path: '/data/zhouyuxuan/ldm/occluded/2023-09-22T10-40-25_occluded/checkpoints/last.ckpt'
+
+    load_only_unet: false
+    unet_config:
+      target: ldm.modules.diffusionmodules.openaimodel.UNetModel
+      params:
+        image_size: 32
+        in_channels: 6
+        out_channels: 3
+        model_channels: 160
+        attention_resolutions:
+        - 16
+        - 8
+        num_res_blocks: 2
+        channel_mult:
+        - 1
+        - 2
+        - 2
+        - 4
+        num_head_channels: 32
+
+    first_stage_config:
+      target: ldm.models.autoencoder.VQModelInterface
+      params:
+        embed_dim: 3
+        n_embed: 8192
+        monitor: val/rec_loss
+        ckpt_path: '/data/zhouyuxuan/ldm/logs/2023-07-17T19-58-04_vqgan_2x/checkpoints/last.ckpt'
+
+        ddconfig:
+          double_z: false
+          z_channels: 3
+          resolution: 256
+          in_channels: 3
+          out_ch: 3
+          ch: 128
+          ch_mult:
+          - 1
+          - 2
+          num_res_blocks: 2
+          attn_resolutions: []
+          dropout: 0.0
+        lossconfig:
+          target: torch.nn.Identity
+    cond_stage_config:
+      target: torch.nn.Identity
+
+data:
+  target: main.DataModuleFromConfig
+  params:
+    batch_size: 64
+    wrap: false
+    num_workers: 4
+    train:
+      target: ldm.data.occluded_scene.occluded_lmdbDataset
+      params:
+        roots: ['/home/zhouyuxuan/OST/occluded/train']
+
+    validation:
+      target: ldm.data.occluded_scene.occluded_lmdbDataset
+      params:
+        roots: ['/home/zhouyuxuan/OST/occluded/test']
+
+    train_align_collate_fn:
+      target: ldm.data.occluded_scene.alignCollate_occluded
+      params:
+        imgH: 32
+        imgW: 128
+        down_sample_scale: 2
+        mask: false
+        train: true
+    val_align_collate_fn:
+      target: ldm.data.occluded_scene.alignCollate_occluded
+      params:
+        imgH: 32
+        imgW: 128
+        down_sample_scale: 2
+        mask: false
+        train: false
