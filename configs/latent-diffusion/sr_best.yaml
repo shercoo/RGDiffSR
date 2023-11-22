@@ -21,8 +21,8 @@ model:
 #    down_sample_rate: 2
 #    STN_enable: true
 #    standard_text: true
-#    VL_pretrained_path: '/home/zhouyuxuan/latent-diffusion/visionlan.pth'
-#    font_path: '/home/zhouyuxuan/latent-diffusion/arial.ttf'
+#    VL_pretrained_path: '/home/zhouyuxuan/RGDiffSR/visionlan.pth'
+#    font_path: '/home/zhouyuxuan/RGDiffSR/arial.ttf'
     monitor: accuracy
 
     load_only_unet: false
@@ -63,7 +63,7 @@ model:
         embed_dim: 3
         n_embed: 8192
         monitor: val/rec_loss
-        ckpt_path: '/home/zhouyuxuan/latent-diffusion/logs/2023-07-17T19-58-04_vqgan_2x/checkpoints/last.ckpt'
+        ckpt_path: 'checkpoints/vqgan.ckpt'
 
         ddconfig:
           double_z: false
@@ -84,7 +84,7 @@ model:
       target: ldm.modules.encoders.tp_generator.TP_generator
       params:
         imgH: 32
-        recognizer_path: '/home/zhouyuxuan/latent-diffusion/crnn.pth'
+        recognizer_path: 'crnn.pth'
 
 
 data:
@@ -96,8 +96,8 @@ data:
     train:
       target: ldm.data.textzoom.multi_lmdbDataset
       params:
-        roots: ['/home/zhouyuxuan/latent-diffusion/textzoom/train1/',
-                '/home/zhouyuxuan/latent-diffusion/textzoom/train2/',
+        roots: ['dataset/textzoom/train1/',
+                'dataset/textzoom/train2/',
 #                '/data2/zhouyuxuan/sr_data/IIIT5K',
 #                '/data2/zhouyuxuan/sr_data/COCO_Text',
 #                '/data2/zhouyuxuan/sr_data/ICDAR2013',
@@ -109,23 +109,12 @@ data:
 #                '/data2/zhouyuxuan/sr_data/SynthText800K_shuffle_81_160',
 #                '/data2/zhouyuxuan/sr_data/SynthText800K_shuffle_161_200'
         ]
-#        size: 256
-#        degradation: bsrgan_light
-#        downscale_f: 4
-#        min_crop_f: 0.5
-#        max_crop_f: 1.0
-#        random_crop: true
     validation:
       target: ldm.data.textzoom.lmdbDataset_real
       params:
-        root: '/home/zhouyuxuan/latent-diffusion/textzoom/test/easy'
+        root: 'dataset/textzoom/test/easy'
         voc_type: 'all'
-#        size: 256
-#        degradation: bsrgan_light
-#        downscale_f: 4
-#        min_crop_f: 0.5
-#        max_crop_f: 1.0
-#        random_crop: true
+
     train_align_collate_fn:
       target: ldm.data.textzoom.alignCollate_realWTL
       params:
