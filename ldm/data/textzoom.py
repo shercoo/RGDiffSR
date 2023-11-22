@@ -111,7 +111,7 @@ def str_filt(str_, voc_type):
         'lower': string.digits + string.ascii_lowercase,
         'upper': string.digits + string.ascii_letters,
         'all': string.digits + string.ascii_letters + string.punctuation,
-        'chinese': open("/home/zhouyuxuan/al_chinese.txt", "r").readlines()[0].replace("\n", "")
+        'chinese': open("al_chinese.txt", "r").readlines()[0].replace("\n", "")
     }
     if voc_type == 'lower':
         str_ = str_.lower()
@@ -358,7 +358,7 @@ class alignCollate_syn(object):
         self.down_sample_scale = down_sample_scale
         self.mask = mask
         # self.alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
-        self.alphabet = open("/home/zhouyuxuan/al_chinese.txt", "r").readlines()[0].replace("\n", "")
+        self.alphabet = open("al_chinese.txt", "r").readlines()[0].replace("\n", "")
         self.d2a = "-" + self.alphabet
         self.alsize = len(self.d2a)
         self.a2d = {}

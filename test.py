@@ -640,13 +640,13 @@ class RecognizeCallback(Callback):
             images = pl_module.recognize_sample(batch, N=114514, split=split, inpaint=False)
 
         images_sr = images['samples']
-        latent=images['latent']
-
-        cvimg = cv2.cvtColor(latent[0, :3, :, :].cpu().numpy().transpose(1, 2, 0) * 255,
-                             cv2.COLOR_RGB2BGR)
-        cv2.imwrite('/home/zhouyuxuan/latent.jpg'
-                    , cvimg)
-        exit(0)
+        # latent=images['latent']
+        #
+        # cvimg = cv2.cvtColor(latent[0, :3, :, :].cpu().numpy().transpose(1, 2, 0) * 255,
+        #                      cv2.COLOR_RGB2BGR)
+        # cv2.imwrite('/home/zhouyuxuan/latent.jpg'
+        #             , cvimg)
+        # exit(0)
 
         # for k in images:
         #     N = min(images[k].shape[0], self.max_images)
@@ -883,7 +883,6 @@ class RecognizeCallback(Callback):
             self.eval(batch, images_sr, self.crnn, self.aster_info, 'CRNN')
 
     def on_validation_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
-        print('fuck')
         if (self.epoch_cnt + 1) % self.rec_interval == 0:
             self.show_results(pl_module, 'ASTER')
             self.show_results(pl_module,'MORAN')
@@ -1238,21 +1237,6 @@ if __name__ == "__main__":
         trainer.validate(model, data)
         exit(0)
 
-        # if hasattr(model, "split_input_params"):
-        #     print(model.split_input_params)
-        # else:
-        #     print('fuck')
-        # exit(0)
-
-        # run
-        if opt.train:
-            try:
-                trainer.fit(model, data)
-            except Exception:
-                melk()
-                raise
-        if not opt.no_test and not trainer.interrupted:
-            trainer.test(model, data)
     except Exception:
         if opt.debug and trainer.global_rank == 0:
             try:
