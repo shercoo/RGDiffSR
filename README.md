@@ -55,6 +55,6 @@ You can manually modify the test dataset directory in `sr_test.yaml` for test on
 
 The model is licensed under the [MIT license](LICENSE).
 
-##Acknowledgement 
-Our code is based on the [latent-diffusion](https://github.com/CompVis/latent-diffusion/tree/main) and [TATT](https://github.com/mjq11302010044/TATT) repositories. Thanks to their research!
+## Acknowledgement 
+Our code is built on the [latent-diffusion](https://github.com/CompVis/latent-diffusion/tree/main) and [TATT](https://github.com/mjq11302010044/TATT) repositories. Thanks to their research!
 
