@@ -4,6 +4,8 @@ The official pytorch implementation of Paper: RECOGNITION-GUIDED DIFFUSION MODEL
 <img src=./RGDiffSR.png />
 </p>
 
+[paper](http://arxiv.org/abs/2311.13317)
+
 ## Installation
 
 Environment preparation: (Python 3.8 + PyTorch 1.7.0 + Torchvision 0.8.1 + pytorch_lightning 1.5.10 + CUDA 11.0)
