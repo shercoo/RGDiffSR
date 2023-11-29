@@ -412,6 +412,278 @@ class ImageLogger(Callback):
                 self.log_gradients(trainer, pl_module, batch_idx=batch_idx)
 
 
+class AsterInfo(object):
+    def __init__(self, voc_type):
+        super(AsterInfo, self).__init__()
+        self.voc_type = voc_type
+        assert voc_type in ['digit', 'lower', 'upper', 'all', 'chinese']
+        self.EOS = 'EOS'
+        self.max_len = 100
+        self.PADDING = 'PADDING'
+        self.UNKNOWN = 'UNKNOWN'
+        self.voc = get_vocabulary(voc_type, EOS=self.EOS, PADDING=self.PADDING, UNKNOWN=self.UNKNOWN)
+        self.char2id = dict(zip(self.voc, range(len(self.voc))))
+        self.id2char = dict(zip(range(len(self.voc)), self.voc))
+        self.rec_num_classes = len(self.voc)
+
+
+class RecognizeCallback(Callback):
+    def __init__(self, gpus, rec_interval):
+        self.save_dir = os.getcwd() + '/logs/' + datetime.datetime.now().strftime('%Y-%m-%dT%H-%M_train')
+        print(self.save_dir)
+        os.makedirs(self.save_dir, exist_ok=True)
+        self.epoch_cnt = 0
+        self.rec_interval = rec_interval
+        self.voc_type = 'all'
+        gpus = list(map(int, filter(lambda x: x != '', gpus.split(','))))
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.aster_info = AsterInfo(self.voc_type)
+        aster_real = self.Aster_init(gpus)
+        self.aster = [{
+            'model': aster_real,
+            'data_in_fn': self.parse_aster_data,
+            'string_process': get_string_aster
+        }]
+        self.cal_psnr = ssim_psnr.calculate_psnr
+        self.cal_ssim = ssim_psnr.SSIM()
+
+        self.n_correct = 0
+        self.n_correct_lr = 0
+        self.n_correct_hr = 0
+        self.sum_images = 0
+        self.metric_dict = {}
+        self.image_counter = 0
+        self.false_cnt = 0
+        self.metric_init()
+
+    def metric_init(self):
+        self.n_correct = 0
+        self.n_correct_lr = 0
+        self.n_correct_hr = 0
+        self.sum_images = 0
+        self.metric_dict = {
+            'psnr_lr': [],
+            'ssim_lr': [],
+            'cnt_psnr_lr': [],
+            'cnt_ssim_lr': [],
+            'psnr': [],
+            'ssim': [],
+            'cnt_psnr': [],
+            'cnt_ssim': [],
+            'accuracy': 0.0,
+            'psnr_avg': 0.0,
+            'ssim_avg': 0.0,
+            'edis_LR': [],
+            'edis_SR': [],
+            'edis_HR': [],
+            'LPIPS_VGG_LR': [],
+            'LPIPS_VGG_SR': []
+        }
+        self.image_counter = 0
+        self.false_cnt = 0
+
+    def Aster_init(self, gpus):
+        aster = recognizer.RecognizerBuilder(arch='ResNet_ASTER', rec_num_classes=self.aster_info.rec_num_classes,
+                                             sDim=512, attDim=512, max_len_labels=self.aster_info.max_len,
+                                             eos=self.aster_info.char2id[self.aster_info.EOS], STN_ON=True)
+        aster_ckpt_path = 'aster.pth.tar'
+        aster.load_state_dict(torch.load(aster_ckpt_path)['state_dict'])
+        print('load pred_trained aster model from %s' % aster_ckpt_path)
+        aster = aster.to(self.device)
+        aster = torch.nn.DataParallel(aster, device_ids=gpus)
+        aster.eval()
+        for p in aster.parameters():
+            p.requires_grad = False
+        return aster
+
+    def parse_aster_data(self, imgs_input):
+        input_dict = {}
+        images_input = imgs_input.to(self.device)
+        input_dict['images'] = images_input * 2 - 1
+        batch_size = images_input.shape[0]
+        input_dict['rec_targets'] = torch.IntTensor(batch_size, self.aster_info.max_len).fill_(1)
+        input_dict['rec_lengths'] = [self.aster_info.max_len] * batch_size
+        return input_dict
+
+    def recognize(self, pl_module, batch, batch_idx, split="train"):
+        print('******************************recognize*********************************')
+        is_train = pl_module.training
+        if is_train:
+            pl_module.eval()
+
+        with torch.no_grad():
+            images = pl_module.recognize_sample(batch, N=114514, split=split, inpaint=False)
+
+        images_sr = images['samples']
+        # for k in images:
+        #     N = min(images[k].shape[0], self.max_images)
+        #     images[k] = images[k][:N]
+        #     if isinstance(images[k], torch.Tensor):
+        #         images[k] = images[k].detach().cpu()
+        #         if self.clamp:
+        #             images[k] = torch.clamp(images[k], -1., 1.)
+
+        if is_train:
+            pl_module.train()
+
+        return images_sr
+
+    def eval(self, batch, images_sr, aster, aster_info, save_dir):
+
+        #############################################
+        # Print the computational cost and param size
+        # self.cal_all_models(model_list, aster[1])
+        #############################################
+
+        images_hr = batch['image']
+        images_lr = batch['LR_image']
+        label_strs = batch['label']
+        indexes = batch['id']
+
+        images_lr = rearrange(images_lr, 'b h w c -> b c h w')
+        images_hr = rearrange(images_hr, 'b h w c -> b c h w')
+
+        images_lr = images_lr.to(self.device)
+        images_hr = images_hr.to(self.device)
+
+        val_batch_size = images_lr.shape[0]
+
+        # print("images_lr:", images_lr.device, images_hr.device)
+
+        aster_dict_lr = aster[0]["data_in_fn"](images_lr[:, :3, :, :])
+        aster_dict_hr = aster[0]["data_in_fn"](images_hr[:, :3, :, :])
+
+        aster_output_lr = aster[0]["model"](aster_dict_lr)
+        aster_output_hr = aster[0]["model"](aster_dict_hr)
+
+        aster_dict_sr = aster[0]["data_in_fn"](images_sr[:, :3, :, :])
+
+        aster_output_sr = aster[0]["model"](aster_dict_sr)
+        # outputs_sr = aster_output_sr.permute(1, 0, 2).contiguous()
+
+        predict_result_sr, _ = aster[0]["string_process"](
+            aster_output_sr['output']['pred_rec'],
+            aster_dict_sr['rec_targets'],
+            dataset=aster_info
+        )
+
+        img_lr = torch.nn.functional.interpolate(images_lr, images_sr.shape[-2:], mode="bicubic")
+
+        self.metric_dict['psnr'].append(self.cal_psnr(images_sr[:, :3], images_hr[:, :3]))
+        self.metric_dict['ssim'].append(self.cal_ssim(images_sr[:, :3], images_hr[:, :3]))
+
+        self.metric_dict['psnr_lr'].append(self.cal_psnr(img_lr[:, :3], images_hr[:, :3]))
+        self.metric_dict['ssim_lr'].append(self.cal_ssim(img_lr[:, :3], images_hr[:, :3]))
+
+        predict_result_lr, _ = aster[0]["string_process"](
+            aster_output_lr['output']['pred_rec'],
+            aster_dict_lr['rec_targets'],
+            dataset=aster_info
+        )
+        predict_result_hr, _ = aster[0]["string_process"](
+            aster_output_hr['output']['pred_rec'],
+            aster_dict_hr['rec_targets'],
+            dataset=aster_info
+        )
+
+        filter_mode = 'lower'
+
+        for batch_i in range(images_lr.shape[0]):
+            label = label_strs[batch_i]
+            # print(predict_result_sr[batch_i],predict_result_lr[batch_i],predict_result_hr[batch_i],label)
+            self.image_counter += 1
+
+            if str_filt(predict_result_sr[batch_i], filter_mode) == str_filt(label, filter_mode):
+                self.n_correct += 1
+            else:
+                self.false_cnt += 1
+                # plt.figure()
+                # plt.title(label)
+                # plt.subplot(1, 3, 1)
+                # plt.imshow(images_lr[batch_i, :3, :, :].cpu().numpy().transpose(1, 2, 0))
+                # plt.title(predict_result_lr[batch_i])
+                # plt.axis('off')
+                #
+                # plt.subplot(1, 3, 2)
+                # plt.imshow(images_hr[batch_i, :3, :, :].cpu().numpy().transpose(1, 2, 0))
+                # plt.title(predict_result_hr[batch_i])
+                # plt.axis('off')
+                #
+                # plt.subplot(1, 3, 3)
+                # plt.imshow(images_sr[batch_i, :3, :, :].cpu().numpy().transpose(1, 2, 0))
+                # plt.title(predict_result_sr[batch_i])
+                # plt.axis('off')
+                # plt.savefig(os.path.join(save_dir,
+                #                          f'{torch.cuda.current_device()}_{self.image_counter}_{self.false_cnt}.jpg'))
+
+            if str_filt(predict_result_lr[batch_i], filter_mode) == str_filt(label, filter_mode):
+                self.n_correct_lr += 1
+
+            if str_filt(predict_result_hr[batch_i], filter_mode) == str_filt(label, filter_mode):
+                self.n_correct_hr += 1
+
+        self.sum_images += val_batch_size
+        torch.cuda.empty_cache()
+        # print(f'sr correct:{self.n_correct}/{self.sum_images}')
+        # print(f'lr correct:{self.n_correct_lr}/{self.sum_images}')
+        # print(f'hr correct:{self.n_correct_hr}/{self.sum_images}')
+
+    def show_results(self, pl_module):
+        psnr_avg = sum(self.metric_dict['psnr']) / (len(self.metric_dict['psnr']) + 1e-10)
+        ssim_avg = sum(self.metric_dict['ssim']) / (len(self.metric_dict['ssim']) + 1e-10)
+
+        psnr_avg_lr = sum(self.metric_dict['psnr_lr']) / (len(self.metric_dict['psnr_lr']) + 1e-10)
+        ssim_avg_lr = sum(self.metric_dict['ssim_lr']) / (len(self.metric_dict['ssim_lr']) + 1e-10)
+
+        print('[{}]\t'
+              'PSNR {:.2f} | SSIM {:.4f}\t'
+              .format(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                      float(psnr_avg), float(ssim_avg)))
+
+        print('[{}]\t'
+              'PSNR_LR {:.2f} | SSIM_LR {:.4f}\t'
+              .format(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                      float(psnr_avg_lr), float(ssim_avg_lr)))
+
+        # self.tripple_display(images_lr, images_sr, images_hr, pred_str_lr, pred_str_sr, label_strs, index)
+
+        accuracy = round(self.n_correct / self.sum_images, 4)
+        accuracy_lr = round(self.n_correct_lr / self.sum_images, 4)
+        accuracy_hr = round(self.n_correct_hr / self.sum_images, 4)
+        psnr_avg = round(psnr_avg.item(), 6)
+        ssim_avg = round(ssim_avg.item(), 6)
+
+        print('sr_accuracy: %.2f%%' % (accuracy * 100))
+
+        # print('sr_NED: %.4f' % (edis_SR))
+        print('lr_accuracy: %.2f%%' % (accuracy_lr * 100))
+        # print('lr_NED: %.4f' % (edis_LR))
+        print('hr_accuracy: %.2f%%' % (accuracy_hr * 100))
+        # print('hr_NED: %.4f' % (edis_HR))
+        log_dict = {'accuracy': accuracy, 'psnr_avg': psnr_avg, 'ssim_avg': ssim_avg}
+
+        pl_module.log_dict(log_dict, prog_bar=False, logger=True, on_step=False, on_epoch=True)
+
+        print("sum_images:", self.sum_images)
+        self.metric_init()
+
+    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
+        if (self.epoch_cnt + 1) % self.rec_interval == 0:
+            images_sr = self.recognize(pl_module, batch, batch_idx, split="val")
+            svd = os.path.join(self.save_dir, str(self.epoch_cnt))
+            os.makedirs(svd, exist_ok=True)
+            self.eval(batch, images_sr, self.aster, self.aster_info, svd)
+
+    def on_validation_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+        if (self.epoch_cnt + 1) % self.rec_interval == 0:
+            self.show_results(pl_module)
+
+    def on_train_epoch_end(
+            self, trainer: "pl.Trainer", pl_module: "pl.LightningModule", unused: Optional = None
+    ):
+        self.epoch_cnt += 1
+
+
 class CUDACallback(Callback):
     # see https://github.com/SeanNaren/minGPT/blob/master/mingpt/callback.py
     def on_train_epoch_start(self, trainer, pl_module):
@@ -590,12 +862,12 @@ if __name__ == "__main__":
             "target": "pytorch_lightning.callbacks.ModelCheckpoint",
             "params": {
                 "dirpath": ckptdir,
-                # "filename": "{epoch:06}-{accuracy:.2f}",
-                "filename": "{epoch:06}",
+                "filename": "{epoch:06}-{accuracy:.2f}",
+                # "filename": "{epoch:06}",
                 "verbose": True,
                 "save_last": True,
-                "every_n_epochs": 20,
-                # "mode": "max"
+                "every_n_epochs": 50,
+                "mode": "max"
             }
         }
         if hasattr(model, "monitor"):
@@ -645,7 +917,13 @@ if __name__ == "__main__":
             "cuda_callback": {
                 "target": "main.CUDACallback"
             },
-
+            "recognize_callback": {
+                "target": "main.RecognizeCallback",
+                "params": {
+                    "gpus": lightning_config.trainer.gpus,
+                    "rec_interval": 50
+                }
+            },
         }
         if version.parse(pl.__version__) >= version.parse('1.4.0'):
             default_callbacks_cfg.update({'checkpoint_callback': modelckpt_cfg})
